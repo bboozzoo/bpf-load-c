@@ -57,7 +57,7 @@ $(POLICY_O): $(POLICY_SRC) $(SRC_DIR)/bpf_types.h $(SRC_DIR)/bpf_helpers.h
 
 $(POLICY_H): $(POLICY_O) $(TOOLS_DIR)/elf2header.py
 	@mkdir -p $(OUT_DIR)
-	$(PYTHON) $(TOOLS_DIR)/elf2header.py $(POLICY_O) $@ --source $(POLICY_SRC)
+	$(PYTHON) $(TOOLS_DIR)/elf2header.py --section cgroup/dev $(POLICY_O) $@ --source $(POLICY_SRC)
 
 # ── Runtime loader: C → executable ───────────────────────────────────────
 

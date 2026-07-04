@@ -71,7 +71,41 @@ def dump_insn_bytes(data: bytes, f):
         f.write(f"    {hex_bytes},  /* {i:3d} */\n")
 
 
-def generate_header(input_path: str, output_path: str, source_path: str = None):
+def generate_header(input_path: str, output_path: str, source_path: str = None,
+                    section: str = None):
+    """Convert a BPF ELF .o into a #include-able C header.
+
+    How it reads from ELF
+    ─────────────────────
+    A BPF ELF object (produced by `clang -target bpf -c`) contains:
+
+      Sections
+      ────────
+      - The **code section** holds the compiled BPF instructions.  Its name
+        comes from the ``SEC("name")`` attribute in C.  For ``SEC("cgroup/dev")``
+        the section is named ``cgroup/dev``; for bare code it is ``.text``.
+      - The **.maps section** holds the map definitions, one 16-byte struct per
+        map: ``{u32 type, u32 key_size, u32 value_size, u32 max_entries}``.
+      - The **relocation section** (``.rel<code_section>``, e.g.
+        ``.relcgroup/dev``) tells us where map references appear in the code.
+      - **.symtab** is the glue: it names every symbol (functions, maps) and
+        records which section each lives in plus its offset within that section.
+
+      How we use each piece
+      ──────────────────────
+      1. **Code section** → raw instruction bytes that become ``policy_insns[]``.
+      2. **.symtab** → walk all symbols: those with ``st_shndx == .maps`` index
+         are the BPF maps.  Their ``st_value`` gives the offset within ``.maps``
+         where the 16-byte descriptor sits; ``st_size`` is always 16.
+      3. **Relocation section** → each ``R_BPF_64_64`` entry has an ``r_offset``
+         (byte offset into the code section) and an ``r_info_sym`` (index into
+         .symtab).  We look up the symbol → if it is a map symbol, we record
+         ``r_offset + 4`` as a *patch offset* (the ``imm32`` field of the
+         ``BPF_LD_MAP_FD`` first instruction where the map fd must be written).
+      4. **.maps section data** → for each map symbol, read 16 bytes at its
+         ``st_value`` offset and unpack them as the map descriptor
+         ``{type, key_size, value_size, max_entries}``.
+    """
     try:
         from elftools.elf.elffile import ELFFile
     except ImportError:
@@ -84,35 +118,43 @@ def generate_header(input_path: str, output_path: str, source_path: str = None):
     # ── Find the BPF code section ─────────────────────────────────────
     # With clang -target bpf, the code lands in whichever section the
     # SEC("name") attribute specifies (e.g. "cgroup/dev", ".text", etc.).
-    # We look for a PROGBITS section that has non-zero size and is
-    # referenced by STT_FUNC symbols (i.e. the actual BPF instructions).
     code_section = None
     code_section_name = None
 
-    # First pass: try .text (common fallback)
-    text_sec = elf.get_section_by_name(".text")
-    if text_sec and text_sec.data_size > 0:
-        code_section = text_sec
-        code_section_name = ".text"
+    if section is not None:
+        # Explicit section name — just grab it
+        code_section = elf.get_section_by_name(section)
+        if code_section is None:
+            fail(f"section '{section}' not found in ELF")
+        if code_section.data_size == 0:
+            fail(f"section '{section}' is empty")
+        code_section_name = section
+    else:
+        # Auto-detection fallback
+        # First pass: try .text (common fallback)
+        text_sec = elf.get_section_by_name(".text")
+        if text_sec and text_sec.data_size > 0:
+            code_section = text_sec
+            code_section_name = ".text"
 
-    # Second pass: look for any non-zero PROGBITS section containing BPF code
-    if code_section is None:
-        for i in range(elf.num_sections()):
-            sec = elf.get_section(i)
-            if sec is None:
-                continue
-            name = sec.name
-            # Skip known non-code sections
-            if name in (".text", ".maps", ".strtab", ".symtab", ".llvm_addrsig",
-                         ".bss", ".data", ".rodata", ""):
-                continue
-            if sec.data_size > 0:
-                code_section = sec
-                code_section_name = name
-                break
+        # Second pass: look for any non-zero PROGBITS section containing BPF code
+        if code_section is None:
+            for i in range(elf.num_sections()):
+                sec = elf.get_section(i)
+                if sec is None:
+                    continue
+                name = sec.name
+                # Skip known non-code sections
+                if name in (".text", ".maps", ".strtab", ".symtab",
+                             ".llvm_addrsig", ".bss", ".data", ".rodata", ""):
+                    continue
+                if sec.data_size > 0:
+                    code_section = sec
+                    code_section_name = name
+                    break
 
-    if code_section is None:
-        fail("no code section found in ELF (no non-empty PROGBITS section)")
+        if code_section is None:
+            fail("no code section found in ELF — pass --section <name>")
 
     text_data = code_section.data()
     text_addr = code_section["sh_addr"]
@@ -349,12 +391,15 @@ def main():
     parser.add_argument("output", help="Output C header (.h)")
     parser.add_argument("--source", default=None,
                         help="Original C source file (for metadata/hash)")
+    parser.add_argument("--section", default=None,
+                        help="ELF section containing BPF instructions "
+                             "(e.g. cgroup/dev, .text). Auto-detected if omitted.")
     args = parser.parse_args()
 
     if not os.path.isfile(args.input):
         fail(f"input file not found: {args.input}")
 
-    generate_header(args.input, args.output, args.source)
+    generate_header(args.input, args.output, args.source, args.section)
 
 
 if __name__ == "__main__":

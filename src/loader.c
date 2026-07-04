@@ -99,6 +99,39 @@ static void close_maps(void)
 
 /* ── Patch map fds into instruction stream ────────────────────────────── */
 
+/*
+ * Relocation patching (what and why)
+ * ───────────────────────────────────
+ *
+ * When clang compiles C BPF code that calls bpf_map_lookup_elem(&devmap, ...),
+ * it emits a BPF_LD_MAP_FD pseudo-instruction — actually TWO consecutive
+ * 8-byte bpf_insn structs:
+ *
+ *   insn[N]   :  code = 0x18  (BPF_LD | BPF_DW | BPF_IMM)
+ *                 dst  = 1     (R1 — first argument register for helper call)
+ *                 src  = 1     (BPF_PSEUDO_MAP_FD — marks this as a map fd load)
+ *                 imm  = 0     (PLACEHOLDER — lower 32 bits of map fd)
+ *   insn[N+1] :  code = 0x00  (reserved — required by the 64-bit load encoding)
+ *                 imm  = 0     (PLACEHOLDER — upper 32 bits of map fd, always 0)
+ *
+ *   insn[N+2] :  BPF_CALL  BPF_FUNC_map_lookup_elem  (the actual helper invocation)
+ *
+ * At compile time the map fd is unknown, so clang leaves the imm fields
+ * zero and records an ELF R_BPF_64_64 relocation pointing to the map
+ * symbol.  elf2header.py finds these relocations and emits patch_offsets[]
+ * — each is the byte offset of the imm32 field of insn[N] within
+ * policy_insns[].
+ *
+ * The total number of patch offsets for a given map equals the number of
+ * bpf_map_lookup_elem() calls that reference that map.  In our case, two
+ * calls to bpf_map_lookup_elem(&devmap, &key) → two relocations → two
+ * patch offsets.
+ *
+ * At load time we create the map, get back an fd (a small int, so only the
+ * lower 32 bits matter), then write that fd into each patch location in
+ * host byte order.  The kernel interprets bpf_insn.imm as a native __s32,
+ * matching how clang originally emitted every other instruction field.
+ */
 static void patch_map_fds(uint8_t *prog)
 {
     for (size_t i = 0; i < policy_maps_count; i++) {
