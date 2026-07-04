@@ -73,6 +73,12 @@ static const size_t policy_insns_len = 408;
 static const size_t policy_insns_cnt = 51;
 
 /* ── Map descriptors ─────────────────────────────────────────────────── */
+/*
+ * Map fd is embedded via BPF_LD_MAP_FD (two insns: ld_dw + zero).
+ * patch_offsets point to the imm32 field of the ld_dw instruction.
+ * The loader writes the fd in host byte order — the kernel interprets
+ * bpf_insn.imm as native __s32, matching how clang emits instructions.
+ */
 
 struct policy_map_desc {
     const char    *name;

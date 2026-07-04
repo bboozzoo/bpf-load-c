@@ -265,7 +265,14 @@ def generate_header(input_path: str, output_path: str, source_path: str = None):
         f.write(f"static const size_t policy_insns_cnt = {insn_count};\n\n")
 
         # ── Map descriptors ─────────────────────────────────────────────
-        f.write("/* ── Map descriptors ─────────────────────────────────────────────────── */\n\n")
+        f.write("/* ── Map descriptors ─────────────────────────────────────────────────── */\n")
+        f.write("/*\n")
+        f.write(" * Map fd is embedded via BPF_LD_MAP_FD (two insns: ld_dw + zero).\n")
+        f.write(" * patch_offsets point to the imm32 field of the ld_dw instruction.\n")
+        f.write(" * The loader writes the fd in host byte order — the kernel interprets\n")
+        f.write(" * bpf_insn.imm as native __s32, matching how clang emits instructions.\n")
+        f.write(" */\n")
+        f.write("\n")
         f.write("struct policy_map_desc {\n")
         f.write("    const char    *name;\n")
         f.write("    uint32_t       type;          /* BPF_MAP_TYPE_* */\n")

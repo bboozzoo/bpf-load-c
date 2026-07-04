@@ -112,11 +112,10 @@ static void patch_map_fds(uint8_t *prog)
                         "(insns_len=%zu)\n", off, policy_insns_len);
                 continue;
             }
-            /* Write fd into the imm32 field (little-endian) */
-            prog[off + 0] = (fd >>  0) & 0xFF;
-            prog[off + 1] = (fd >>  8) & 0xFF;
-            prog[off + 2] = (fd >> 16) & 0xFF;
-            prog[off + 3] = (fd >> 24) & 0xFF;
+            /* Write the map fd in host byte order (kernel interprets
+               bpf_insn.imm as a native __s32 — same endianness as the
+               clang-emitted instructions). */
+            memcpy(&prog[off], &fd, sizeof(fd));
         }
     }
 }
