@@ -1,0 +1,6 @@
+# Built binary (not committed — rebuilt from source)
+bpf-load
+
+# Pi agent internal state
+.pi-subagents/
+.plans/
