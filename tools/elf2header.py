@@ -121,40 +121,15 @@ def generate_header(input_path: str, output_path: str, source_path: str = None,
     code_section = None
     code_section_name = None
 
-    if section is not None:
-        # Explicit section name — just grab it
-        code_section = elf.get_section_by_name(section)
-        if code_section is None:
-            fail(f"section '{section}' not found in ELF")
-        if code_section.data_size == 0:
-            fail(f"section '{section}' is empty")
-        code_section_name = section
-    else:
-        # Auto-detection fallback
-        # First pass: try .text (common fallback)
-        text_sec = elf.get_section_by_name(".text")
-        if text_sec and text_sec.data_size > 0:
-            code_section = text_sec
-            code_section_name = ".text"
+    if section is None:
+        fail("--section <name> is required (e.g. --section cgroup/dev)")
 
-        # Second pass: look for any non-zero PROGBITS section containing BPF code
-        if code_section is None:
-            for i in range(elf.num_sections()):
-                sec = elf.get_section(i)
-                if sec is None:
-                    continue
-                name = sec.name
-                # Skip known non-code sections
-                if name in (".text", ".maps", ".strtab", ".symtab",
-                             ".llvm_addrsig", ".bss", ".data", ".rodata", ""):
-                    continue
-                if sec.data_size > 0:
-                    code_section = sec
-                    code_section_name = name
-                    break
-
-        if code_section is None:
-            fail("no code section found in ELF — pass --section <name>")
+    code_section = elf.get_section_by_name(section)
+    if code_section is None:
+        fail(f"section '{section}' not found in ELF")
+    if code_section.data_size == 0:
+        fail(f"section '{section}' is empty")
+    code_section_name = section
 
     text_data = code_section.data()
     text_addr = code_section["sh_addr"]
@@ -391,9 +366,9 @@ def main():
     parser.add_argument("output", help="Output C header (.h)")
     parser.add_argument("--source", default=None,
                         help="Original C source file (for metadata/hash)")
-    parser.add_argument("--section", default=None,
+    parser.add_argument("--section", required=True,
                         help="ELF section containing BPF instructions "
-                             "(e.g. cgroup/dev, .text). Auto-detected if omitted.")
+                             "(e.g. cgroup/dev)")
     args = parser.parse_args()
 
     if not os.path.isfile(args.input):
